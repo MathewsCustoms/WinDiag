@@ -40,13 +40,15 @@ class SystemDiagnosticApp(QMainWindow):
         self.memory_button = self.create_styled_button("Check Memory Usage")
         self.disk_button = self.create_styled_button("Check Disk Space")
         self.temp_button = self.create_styled_button("Find Temporary Files")
-        self.startup_button = self.create_styled_button("Manage Startup Applications")
         self.clear_temp_button = self.create_styled_button("Clean Temporary Files")
+        self.startup_button = self.create_styled_button("Manage Startup Applications")
+        self.process_button = self.create_styled_button("Manage Processes")  # Process Management Button
 
         # Add buttons to respective columns
         self.left_column.addWidget(self.cpu_button)
         self.left_column.addWidget(self.memory_button)
         self.left_column.addWidget(self.disk_button)
+        self.left_column.addWidget(self.process_button)  # Add Process Management button here
 
         self.right_column.addWidget(self.temp_button)
         self.right_column.addWidget(self.startup_button)
@@ -70,8 +72,9 @@ class SystemDiagnosticApp(QMainWindow):
         self.memory_button.clicked.connect(self.check_memory_usage)
         self.disk_button.clicked.connect(self.check_disk_space)
         self.temp_button.clicked.connect(self.find_temp_files)
-        self.startup_button.clicked.connect(self.manage_startup_apps)
         self.clear_temp_button.clicked.connect(self.clean_temp_files)
+        self.startup_button.clicked.connect(self.manage_startup_apps)  # Correctly connected to manage_startup_apps
+        self.process_button.clicked.connect(self.manage_processes)  # Correctly connected to manage_processes
 
         # Temporary file list
         self.temp_files = []
@@ -162,25 +165,29 @@ class SystemDiagnosticApp(QMainWindow):
         self.temp_files = []
 
     def manage_startup_apps(self):
+        """Display a window to manage startup applications."""
         startup_apps = self.get_startup_apps()
         non_essential_apps = self.get_non_essential_startup_apps(startup_apps)
 
-        # Display the apps in a list with checkboxes
+        # Create a new window for startup management
         self.startup_window = QWidget()
         self.startup_window.setWindowTitle("Manage Startup Applications")
         layout = QVBoxLayout()
 
-        label = QLabel("Non-Essential Startup Applications")
+        # Add label
+        label = QLabel("Non-Essential Startup Applications:")
         layout.addWidget(label)
 
-        self.app_list = QListWidget()
+        # Startup app list
+        self.startup_list = QListWidget()
         for app_name, app_path in non_essential_apps:
             item = QListWidgetItem(f"{app_name} - {app_path}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
-            self.app_list.addItem(item)
+            self.startup_list.addItem(item)
+        layout.addWidget(self.startup_list)
 
-        layout.addWidget(self.app_list)
+        # Disable Selected button
         disable_button = self.create_styled_button("Disable Selected")
         disable_button.clicked.connect(self.disable_selected_startup_apps)
         layout.addWidget(disable_button)
@@ -190,23 +197,43 @@ class SystemDiagnosticApp(QMainWindow):
         self.startup_window.show()
 
     def disable_selected_startup_apps(self):
+        """Disable selected startup applications."""
         selected_apps = []
-        for i in range(self.app_list.count()):
-            item = self.app_list.item(i)
+        for i in range(self.startup_list.count()):
+            item = self.startup_list.item(i)
             if item.checkState() == Qt.Checked:
-                app_name = item.text().split(" - ")[0]
-                selected_apps.append(app_name)
+                selected_apps.append(item.text().split(" - ")[0])
 
         if not selected_apps:
             QMessageBox.information(self, "Info", "No apps selected for disabling.")
             return
 
-        self.disable_startup_apps(selected_apps)
-        QMessageBox.information(self, "Info", f"Disabled {len(selected_apps)} startup apps.")
+        for app_name in selected_apps:
+            self.disable_startup_app(app_name)
+
+        QMessageBox.information(self, "Success", f"Disabled {len(selected_apps)} startup apps.")
         self.startup_window.close()
 
-    # Startup app utility functions
+    def disable_startup_app(self, app_name):
+        """Disable a single startup application."""
+        paths = [
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")
+        ]
+        for hive, path in paths:
+            try:
+                with winreg.OpenKey(hive, path, 0, winreg.KEY_WRITE) as key:
+                    try:
+                        winreg.DeleteValue(key, app_name)
+                        logging.info(f"Disabled startup app: {app_name}")
+                        break
+                    except FileNotFoundError:
+                        continue
+            except PermissionError as e:
+                logging.error(f"Failed to disable {app_name}: {e}")
+
     def get_startup_apps(self):
+        """Retrieve startup applications."""
         startup_apps = []
         paths = [
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
@@ -228,6 +255,7 @@ class SystemDiagnosticApp(QMainWindow):
         return startup_apps
 
     def get_non_essential_startup_apps(self, apps):
+        """Filter non-essential startup applications."""
         critical_apps = {
             "Windows Security Notification": True,
             "OneDrive": True,
@@ -239,22 +267,102 @@ class SystemDiagnosticApp(QMainWindow):
             if not critical_apps.get(app_name, False)
         ]
 
-    def disable_startup_apps(self, apps):
-        paths = [
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
-            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")
-        ]
-        for app_name in apps:
-            for hive, path in paths:
-                try:
-                    with winreg.OpenKey(hive, path, 0, winreg.KEY_WRITE) as key:
-                        try:
-                            winreg.DeleteValue(key, app_name)
-                            logging.info(f"Disabled startup app: {app_name}")
-                        except FileNotFoundError:
-                            continue
-                except PermissionError as e:
-                    logging.warning(f"Permission denied for {app_name}: {e}")
+    # Process Management
+    def manage_processes(self):
+        """Display a window to manage running processes."""
+        self.process_window = QWidget()
+        self.process_window.setWindowTitle("Manage Running Processes")
+        layout = QVBoxLayout()
+
+        # Add label
+        label = QLabel("Select processes to terminate:")
+        layout.addWidget(label)
+
+        # Process list
+        self.process_list = QListWidget()
+        self.update_process_list()
+        layout.addWidget(self.process_list)
+
+        # Kill Selected button
+        kill_button = QPushButton("Kill Selected")
+        kill_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF0000;
+                color: white;
+                font-weight: bold;
+                border-radius: 10px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #CC0000;
+            }
+            QPushButton:pressed {
+                background-color: #990000;
+            }
+        """)
+        kill_button.clicked.connect(self.kill_selected_processes)
+        layout.addWidget(kill_button)
+
+        self.process_window.setLayout(layout)
+        self.process_window.resize(600, 400)
+        self.process_window.show()
+
+    def update_process_list(self):
+        """Fetch and display running processes sorted by CPU or memory usage."""
+        self.process_list.clear()
+
+        # Fetch processes
+        processes = sorted(
+            psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']),
+            key=lambda p: (p.info['cpu_percent'], p.info['memory_percent']),
+            reverse=True
+        )
+
+        # Populate list
+        for proc in processes:
+            try:
+                item_text = (
+                    f"PID: {proc.info['pid']}, "
+                    f"Name: {proc.info['name']}, "
+                    f"CPU: {proc.info['cpu_percent']}%, "
+                    f"Memory: {proc.info['memory_percent']}%"
+                )
+                item = QListWidgetItem(item_text)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self.process_list.addItem(item)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+    def kill_selected_processes(self):
+        """Terminate selected processes."""
+        selected_items = []
+        for i in range(self.process_list.count()):
+            item = self.process_list.item(i)
+            if item.checkState() == Qt.Checked:
+                selected_items.append(item.text())
+
+        if not selected_items:
+            QMessageBox.information(self, "Info", "No processes selected for termination.")
+            return
+
+        failed = []
+        for item_text in selected_items:
+            pid = int(item_text.split(",")[0].split(":")[1].strip())  # Extract PID
+            try:
+                process = psutil.Process(pid)
+                process.terminate()
+                self.process_list.takeItem(self.process_list.row(item))
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                logging.error(f"Failed to terminate process {pid}: {e}")
+                failed.append(pid)
+
+        if failed:
+            QMessageBox.warning(self, "Warning", f"Failed to terminate {len(failed)} processes.")
+        else:
+            QMessageBox.information(self, "Success", "Selected processes terminated successfully.")
+
+        self.update_process_list()
 
 
 # Run the application
