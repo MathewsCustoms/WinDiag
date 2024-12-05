@@ -4,7 +4,7 @@ import psutil
 import winreg
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, 
-    QWidget, QLabel, QListWidget, QListWidgetItem, QMessageBox, QCheckBox
+    QHBoxLayout, QWidget, QLabel, QListWidget, QListWidgetItem, QMessageBox
 )
 from PyQt5.QtCore import Qt
 import logging
@@ -24,26 +24,43 @@ class SystemDiagnosticApp(QMainWindow):
 
         self.layout = QVBoxLayout()
 
+        # Add a label
+        self.title_label = QLabel("System Diagnostic Tool")
+        self.title_label.setStyleSheet("font-size: 24px; font-weight: bold;")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.layout.addWidget(self.title_label)
+
+        # Create two columns of buttons
+        self.button_layout = QHBoxLayout()
+        self.left_column = QVBoxLayout()
+        self.right_column = QVBoxLayout()
+
         # Buttons for actions
-        self.cpu_button = QPushButton("Check CPU Usage")
-        self.memory_button = QPushButton("Check Memory Usage")
-        self.disk_button = QPushButton("Check Disk Space")
-        self.temp_button = QPushButton("Find Temporary Files")
-        self.startup_button = QPushButton("Manage Startup Applications")
-        self.clear_temp_button = QPushButton("Clean Temporary Files")
+        self.cpu_button = self.create_styled_button("Check CPU Usage")
+        self.memory_button = self.create_styled_button("Check Memory Usage")
+        self.disk_button = self.create_styled_button("Check Disk Space")
+        self.temp_button = self.create_styled_button("Find Temporary Files")
+        self.startup_button = self.create_styled_button("Manage Startup Applications")
+        self.clear_temp_button = self.create_styled_button("Clean Temporary Files")
+
+        # Add buttons to respective columns
+        self.left_column.addWidget(self.cpu_button)
+        self.left_column.addWidget(self.memory_button)
+        self.left_column.addWidget(self.disk_button)
+
+        self.right_column.addWidget(self.temp_button)
+        self.right_column.addWidget(self.startup_button)
+        self.right_column.addWidget(self.clear_temp_button)
+
+        # Add columns to the layout
+        self.button_layout.addLayout(self.left_column)
+        self.button_layout.addLayout(self.right_column)
+        self.layout.addLayout(self.button_layout)
 
         # Text area to display results
         self.result_area = QTextEdit()
         self.result_area.setReadOnly(True)
-
-        # Add buttons and result area to layout
-        self.layout.addWidget(QLabel("System Diagnostic Tool"))
-        self.layout.addWidget(self.cpu_button)
-        self.layout.addWidget(self.memory_button)
-        self.layout.addWidget(self.disk_button)
-        self.layout.addWidget(self.temp_button)
-        self.layout.addWidget(self.startup_button)
-        self.layout.addWidget(self.clear_temp_button)
+        self.result_area.setStyleSheet("font-size: 14px;")
         self.layout.addWidget(self.result_area)
 
         self.central_widget.setLayout(self.layout)
@@ -58,6 +75,27 @@ class SystemDiagnosticApp(QMainWindow):
 
         # Temporary file list
         self.temp_files = []
+
+    def create_styled_button(self, text):
+        """Create a styled button with rounded edges and blue color."""
+        button = QPushButton(text)
+        button.setStyleSheet("""
+            QPushButton {
+                background-color: #007BFF;
+                color: white;
+                border: none;
+                border-radius: 15px;
+                padding: 10px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+            QPushButton:pressed {
+                background-color: #003f7f;
+            }
+        """)
+        return button
 
     # System diagnostic functions
     def check_cpu_usage(self):
@@ -143,7 +181,7 @@ class SystemDiagnosticApp(QMainWindow):
             self.app_list.addItem(item)
 
         layout.addWidget(self.app_list)
-        disable_button = QPushButton("Disable Selected")
+        disable_button = self.create_styled_button("Disable Selected")
         disable_button.clicked.connect(self.disable_selected_startup_apps)
         layout.addWidget(disable_button)
 
