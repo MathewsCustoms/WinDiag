@@ -1,17 +1,43 @@
 import sys
 import os
 import psutil
+import subprocess
 import winreg
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, 
-    QHBoxLayout, QWidget, QLabel, QListWidget, QListWidgetItem, QMessageBox
+    QHBoxLayout, QWidget, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import logging
 
 # Configure logging
 logging.basicConfig(filename='system_diagnosis.log', level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+class SoftwareFetchThread(QThread):
+    """Worker thread to fetch installed software."""
+    software_fetched = pyqtSignal(list)  # Signal to send the fetched software list
+
+    def run(self):
+        """Fetch installed software in a separate thread."""
+        software_list = []
+        try:
+            output = subprocess.check_output(
+                ["powershell", "-Command", "Get-WmiObject -Class Win32_Product | Select-Object Name,Version,InstallDate"],
+                universal_newlines=True
+            )
+            for line in output.splitlines():
+                if line.strip() and "Name" not in line:
+                    parts = line.split()
+                    name = " ".join(parts[:-2])  # Assume last two fields are Version and InstallDate
+                    version = parts[-2] if len(parts) >= 2 else "N/A"
+                    install_date = parts[-1] if len(parts) >= 2 else "N/A"
+                    software_list.append((name, version, install_date))
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Failed to fetch installed software: {e}")
+        self.software_fetched.emit(software_list)  # Emit signal with the fetched data
 
 
 class SystemDiagnosticApp(QMainWindow):
@@ -42,17 +68,19 @@ class SystemDiagnosticApp(QMainWindow):
         self.temp_button = self.create_styled_button("Find Temporary Files")
         self.clear_temp_button = self.create_styled_button("Clean Temporary Files")
         self.startup_button = self.create_styled_button("Manage Startup Applications")
-        self.process_button = self.create_styled_button("Manage Processes")  # Process Management Button
+        self.process_button = self.create_styled_button("Manage Processes")
+        self.software_button = self.create_styled_button("Manage Software")  # Software Inventory Button
 
         # Add buttons to respective columns
         self.left_column.addWidget(self.cpu_button)
         self.left_column.addWidget(self.memory_button)
         self.left_column.addWidget(self.disk_button)
-        self.left_column.addWidget(self.process_button)  # Add Process Management button here
+        self.left_column.addWidget(self.process_button)
 
         self.right_column.addWidget(self.temp_button)
         self.right_column.addWidget(self.startup_button)
         self.right_column.addWidget(self.clear_temp_button)
+        self.right_column.addWidget(self.software_button)
 
         # Add columns to the layout
         self.button_layout.addLayout(self.left_column)
@@ -73,8 +101,9 @@ class SystemDiagnosticApp(QMainWindow):
         self.disk_button.clicked.connect(self.check_disk_space)
         self.temp_button.clicked.connect(self.find_temp_files)
         self.clear_temp_button.clicked.connect(self.clean_temp_files)
-        self.startup_button.clicked.connect(self.manage_startup_apps)  # Correctly connected to manage_startup_apps
-        self.process_button.clicked.connect(self.manage_processes)  # Correctly connected to manage_processes
+        self.startup_button.clicked.connect(self.manage_startup_apps)
+        self.process_button.clicked.connect(self.manage_processes)
+        self.software_button.clicked.connect(self.manage_software)
 
         # Temporary file list
         self.temp_files = []
@@ -164,73 +193,33 @@ class SystemDiagnosticApp(QMainWindow):
         logging.info(f"Successfully deleted {success_count} files. Failed: {len(failed_files)}")
         self.temp_files = []
 
+    # Startup Management
     def manage_startup_apps(self):
-        """Display a window to manage startup applications."""
+        """Display and manage startup applications."""
         startup_apps = self.get_startup_apps()
-        non_essential_apps = self.get_non_essential_startup_apps(startup_apps)
 
-        # Create a new window for startup management
         self.startup_window = QWidget()
-        self.startup_window.setWindowTitle("Manage Startup Applications")
+        self.startup_window.setWindowTitle("Startup Applications")
         layout = QVBoxLayout()
 
-        # Add label
-        label = QLabel("Non-Essential Startup Applications:")
+        label = QLabel("Startup Applications")
         layout.addWidget(label)
 
-        # Startup app list
         self.startup_list = QListWidget()
-        for app_name, app_path in non_essential_apps:
+        for app_name, app_path in startup_apps:
             item = QListWidgetItem(f"{app_name} - {app_path}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.startup_list.addItem(item)
         layout.addWidget(self.startup_list)
 
-        # Disable Selected button
         disable_button = self.create_styled_button("Disable Selected")
-        disable_button.clicked.connect(self.disable_selected_startup_apps)
+        disable_button.clicked.connect(self.disable_startup_apps)
         layout.addWidget(disable_button)
 
         self.startup_window.setLayout(layout)
         self.startup_window.resize(600, 400)
         self.startup_window.show()
-
-    def disable_selected_startup_apps(self):
-        """Disable selected startup applications."""
-        selected_apps = []
-        for i in range(self.startup_list.count()):
-            item = self.startup_list.item(i)
-            if item.checkState() == Qt.Checked:
-                selected_apps.append(item.text().split(" - ")[0])
-
-        if not selected_apps:
-            QMessageBox.information(self, "Info", "No apps selected for disabling.")
-            return
-
-        for app_name in selected_apps:
-            self.disable_startup_app(app_name)
-
-        QMessageBox.information(self, "Success", f"Disabled {len(selected_apps)} startup apps.")
-        self.startup_window.close()
-
-    def disable_startup_app(self, app_name):
-        """Disable a single startup application."""
-        paths = [
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
-            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")
-        ]
-        for hive, path in paths:
-            try:
-                with winreg.OpenKey(hive, path, 0, winreg.KEY_WRITE) as key:
-                    try:
-                        winreg.DeleteValue(key, app_name)
-                        logging.info(f"Disabled startup app: {app_name}")
-                        break
-                    except FileNotFoundError:
-                        continue
-            except PermissionError as e:
-                logging.error(f"Failed to disable {app_name}: {e}")
 
     def get_startup_apps(self):
         """Retrieve startup applications."""
@@ -254,115 +243,165 @@ class SystemDiagnosticApp(QMainWindow):
                 continue
         return startup_apps
 
-    def get_non_essential_startup_apps(self, apps):
-        """Filter non-essential startup applications."""
-        critical_apps = {
-            "Windows Security Notification": True,
-            "OneDrive": True,
-            "Microsoft Teams": False
-        }
-        return [
-            (app_name, app_path) 
-            for app_name, app_path in apps 
-            if not critical_apps.get(app_name, False)
+    def disable_startup_apps(self):
+        """Disable selected startup applications."""
+        for i in range(self.startup_list.count()):
+            item = self.startup_list.item(i)
+            if item.checkState() == Qt.Checked:
+                app_name = item.text().split(" - ")[0]
+                self.delete_startup_app(app_name)
+
+        QMessageBox.information(self, "Info", "Selected startup apps have been disabled.")
+
+    def delete_startup_app(self, app_name):
+        """Remove a startup application from the registry."""
+        paths = [
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")
         ]
+        for hive, path in paths:
+            try:
+                with winreg.OpenKey(hive, path, 0, winreg.KEY_WRITE) as key:
+                    try:
+                        winreg.DeleteValue(key, app_name)
+                        logging.info(f"Deleted startup app: {app_name}")
+                        break
+                    except FileNotFoundError:
+                        continue
+            except PermissionError as e:
+                logging.error(f"Failed to delete {app_name}: {e}")
 
     # Process Management
     def manage_processes(self):
-        """Display a window to manage running processes."""
+        """Display and manage running processes."""
         self.process_window = QWidget()
-        self.process_window.setWindowTitle("Manage Running Processes")
+        self.process_window.setWindowTitle("Running Processes")
+        layout = QVBoxLayout()
+
+        label = QLabel("Running Processes")
+        layout.addWidget(label)
+
+        self.process_list = QListWidget()
+        processes = psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent'])
+        for proc in processes:
+            try:
+                text = f"PID: {proc.info['pid']}, Name: {proc.info['name']}, CPU: {proc.info['cpu_percent']}%, Memory: {proc.info['memory_percent']}%"
+                item = QListWidgetItem(text)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self.process_list.addItem(item)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        layout.addWidget(self.process_list)
+
+        kill_button = self.create_styled_button("Kill Selected")
+        kill_button.clicked.connect(self.kill_selected_processes)
+        layout.addWidget(kill_button)
+
+        self.process_window.setLayout(layout)
+        self.process_window.resize(800, 600)
+        self.process_window.show()
+
+    def kill_selected_processes(self):
+        """Kill selected processes."""
+        for i in range(self.process_list.count()):
+            item = self.process_list.item(i)
+            if item.checkState() == Qt.Checked:
+                pid = int(item.text().split(",")[0].split(":")[1].strip())
+                try:
+                    psutil.Process(pid).terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        QMessageBox.information(self, "Info", "Selected processes have been terminated.")
+
+    # Software Inventory Functions
+    def manage_software(self):
+        """Display a window to manage installed software."""
+        self.software_window = QWidget()
+        self.software_window.setWindowTitle("Installed Software")
         layout = QVBoxLayout()
 
         # Add label
-        label = QLabel("Select processes to terminate:")
-        layout.addWidget(label)
+        self.loading_label = QLabel("Loading installed software... Please wait.")
+        self.loading_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #007BFF;")
+        layout.addWidget(self.loading_label)
 
-        # Process list
-        self.process_list = QListWidget()
-        self.update_process_list()
-        layout.addWidget(self.process_list)
+        # Create a table for software inventory
+        self.software_table = QTableWidget()
+        self.software_table.setColumnCount(3)
+        self.software_table.setHorizontalHeaderLabels(["Name", "Version", "Install Date"])
+        self.software_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.software_table.setVisible(False)  # Hide table until data is loaded
+        layout.addWidget(self.software_table)
 
-        # Kill Selected button
-        kill_button = QPushButton("Kill Selected")
-        kill_button.setStyleSheet("""
+        # Add "Uninstall Selected" button
+        self.uninstall_button = self.create_styled_button("Uninstall Selected")
+        self.uninstall_button.setEnabled(False)  # Disable until data is loaded
+        self.uninstall_button.setStyleSheet("""
             QPushButton {
-                background-color: #FF0000;
+                background-color: #FF4500;
                 color: white;
                 font-weight: bold;
                 border-radius: 10px;
                 padding: 10px;
             }
             QPushButton:hover {
-                background-color: #CC0000;
+                background-color: #CC3700;
             }
             QPushButton:pressed {
-                background-color: #990000;
+                background-color: #992900;
             }
         """)
-        kill_button.clicked.connect(self.kill_selected_processes)
-        layout.addWidget(kill_button)
+        self.uninstall_button.clicked.connect(self.uninstall_selected_software)
+        layout.addWidget(self.uninstall_button)
 
-        self.process_window.setLayout(layout)
-        self.process_window.resize(600, 400)
-        self.process_window.show()
+        self.software_window.setLayout(layout)
+        self.software_window.resize(800, 600)
+        self.software_window.show()
 
-    def update_process_list(self):
-        """Fetch and display running processes sorted by CPU or memory usage."""
-        self.process_list.clear()
+        # Start the software fetch thread
+        self.software_fetch_thread = SoftwareFetchThread()
+        self.software_fetch_thread.software_fetched.connect(self.populate_software_table)
+        self.software_fetch_thread.start()
 
-        # Fetch processes
-        processes = sorted(
-            psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']),
-            key=lambda p: (p.info['cpu_percent'], p.info['memory_percent']),
-            reverse=True
-        )
+    def populate_software_table(self, software):
+        """Populate the software table with fetched data."""
+        self.loading_label.setVisible(False)  # Hide loading label
+        self.software_table.setVisible(True)  # Show table
+        self.uninstall_button.setEnabled(True)  # Enable uninstall button
 
-        # Populate list
-        for proc in processes:
-            try:
-                item_text = (
-                    f"PID: {proc.info['pid']}, "
-                    f"Name: {proc.info['name']}, "
-                    f"CPU: {proc.info['cpu_percent']}%, "
-                    f"Memory: {proc.info['memory_percent']}%"
-                )
-                item = QListWidgetItem(item_text)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(Qt.Unchecked)
-                self.process_list.addItem(item)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        self.software_table.setRowCount(len(software))
+        for row, (name, version, install_date) in enumerate(software):
+            self.software_table.setItem(row, 0, QTableWidgetItem(name))
+            self.software_table.setItem(row, 1, QTableWidgetItem(version))
+            self.software_table.setItem(row, 2, QTableWidgetItem(install_date))
 
-    def kill_selected_processes(self):
-        """Terminate selected processes."""
-        selected_items = []
-        for i in range(self.process_list.count()):
-            item = self.process_list.item(i)
-            if item.checkState() == Qt.Checked:
-                selected_items.append(item.text())
-
-        if not selected_items:
-            QMessageBox.information(self, "Info", "No processes selected for termination.")
+    def uninstall_selected_software(self):
+        """Uninstall selected software using PowerShell."""
+        selected_rows = self.software_table.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.information(self, "Info", "No software selected for uninstallation.")
             return
 
-        failed = []
-        for item_text in selected_items:
-            pid = int(item_text.split(",")[0].split(":")[1].strip())  # Extract PID
+        failed_uninstalls = []
+        for row in selected_rows:
+            name = self.software_table.item(row.row(), 0).text()
             try:
-                process = psutil.Process(pid)
-                process.terminate()
-                self.process_list.takeItem(self.process_list.row(item))
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logging.error(f"Failed to terminate process {pid}: {e}")
-                failed.append(pid)
+                subprocess.run(
+                    ["powershell", "-Command", f"(Get-WmiObject -Class Win32_Product -Filter \"Name='{name}'\").Uninstall()"],
+                    check=True
+                )
+                logging.info(f"Successfully uninstalled {name}.")
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to uninstall {name}: {e}")
+                failed_uninstalls.append(name)
 
-        if failed:
-            QMessageBox.warning(self, "Warning", f"Failed to terminate {len(failed)} processes.")
+        if failed_uninstalls:
+            QMessageBox.warning(self, "Warning", f"Failed to uninstall {len(failed_uninstalls)} program(s).")
         else:
-            QMessageBox.information(self, "Success", "Selected processes terminated successfully.")
+            QMessageBox.information(self, "Success", "Selected software uninstalled successfully.")
 
-        self.update_process_list()
+        self.manage_software()  # Refresh the list
 
 
 # Run the application
