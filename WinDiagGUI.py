@@ -70,6 +70,7 @@ class SystemDiagnosticApp(QMainWindow):
         self.startup_button = self.create_styled_button("Manage Startup Applications")
         self.process_button = self.create_styled_button("Manage Processes")
         self.software_button = self.create_styled_button("Manage Software")  # Software Inventory Button
+        self.network_button = self.create_styled_button("Network Diagnostics")  # Network Diagnostics Button
 
         # Add buttons to respective columns
         self.left_column.addWidget(self.cpu_button)
@@ -81,6 +82,7 @@ class SystemDiagnosticApp(QMainWindow):
         self.right_column.addWidget(self.startup_button)
         self.right_column.addWidget(self.clear_temp_button)
         self.right_column.addWidget(self.software_button)
+        self.right_column.addWidget(self.network_button)
 
         # Add columns to the layout
         self.button_layout.addLayout(self.left_column)
@@ -104,6 +106,7 @@ class SystemDiagnosticApp(QMainWindow):
         self.startup_button.clicked.connect(self.manage_startup_apps)
         self.process_button.clicked.connect(self.manage_processes)
         self.software_button.clicked.connect(self.manage_software)
+        self.network_button.clicked.connect(self.network_diagnostics)
 
         # Temporary file list
         self.temp_files = []
@@ -402,6 +405,44 @@ class SystemDiagnosticApp(QMainWindow):
             QMessageBox.information(self, "Success", "Selected software uninstalled successfully.")
 
         self.manage_software()  # Refresh the list
+
+    # Network Diagnostics
+    def network_diagnostics(self):
+        """Display active network connections."""
+        self.network_window = QWidget()
+        self.network_window.setWindowTitle("Network Diagnostics")
+        layout = QVBoxLayout()
+
+        label = QLabel("Active Network Connections")
+        layout.addWidget(label)
+
+        # Create a table for network connections
+        self.network_table = QTableWidget()
+        self.network_table.setColumnCount(4)
+        self.network_table.setHorizontalHeaderLabels(["Local Address", "Remote Address", "Status", "PID"])
+        self.network_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        # Fetch and display network connections
+        connections = psutil.net_connections()
+        self.network_table.setRowCount(len(connections))
+
+        for row, conn in enumerate(connections):
+            # Format local and remote addresses
+            local_address = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "N/A"
+            remote_address = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A"
+            status = conn.status
+            pid = str(conn.pid) if conn.pid else "N/A"
+
+            # Populate the table
+            self.network_table.setItem(row, 0, QTableWidgetItem(local_address))
+            self.network_table.setItem(row, 1, QTableWidgetItem(remote_address))
+            self.network_table.setItem(row, 2, QTableWidgetItem(status))
+            self.network_table.setItem(row, 3, QTableWidgetItem(pid))
+
+        layout.addWidget(self.network_table)
+        self.network_window.setLayout(layout)
+        self.network_window.resize(800, 600)
+        self.network_window.show()
 
 
 # Run the application
