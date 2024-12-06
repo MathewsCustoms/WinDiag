@@ -16,28 +16,26 @@ logging.basicConfig(filename='system_diagnosis.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-class SoftwareFetchThread(QThread):
-    """Worker thread to fetch installed software."""
+class WingetSoftwareFetchThread(QThread):
+    """Worker thread to fetch installed software and their update status using winget."""
     software_fetched = pyqtSignal(list)  # Signal to send the fetched software list
 
     def run(self):
-        """Fetch installed software in a separate thread."""
+        """Fetch installed software and updates using winget."""
         software_list = []
         try:
             output = subprocess.check_output(
-                ["powershell", "-Command", "Get-WmiObject -Class Win32_Product | Select-Object Name,Version,InstallDate"],
-                universal_newlines=True
+                ["winget", "list"], universal_newlines=True
             )
             for line in output.splitlines():
-                if line.strip() and "Name" not in line:
+                if line.strip() and not line.startswith("Name") and not line.startswith("---"):
                     parts = line.split()
-                    name = " ".join(parts[:-2])  # Assume last two fields are Version and InstallDate
-                    version = parts[-2] if len(parts) >= 2 else "N/A"
-                    install_date = parts[-1] if len(parts) >= 2 else "N/A"
-                    software_list.append((name, version, install_date))
+                    name = " ".join(parts[:-1])  # Assume the last field is update status
+                    update_available = "Yes" if "Available" in parts[-1] else "No"
+                    software_list.append((name, update_available))
         except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to fetch installed software: {e}")
-        self.software_fetched.emit(software_list)  # Emit signal with the fetched data
+            logging.error(f"Failed to fetch software list using winget: {e}")
+        self.software_fetched.emit(software_list)
 
 
 class SystemDiagnosticApp(QMainWindow):
@@ -240,8 +238,9 @@ class SystemDiagnosticApp(QMainWindow):
                 pid = int(item.text().split(",")[0].split(":")[1].strip())
                 try:
                     psutil.Process(pid).terminate()
+                    logging.info(f"Terminated process with PID: {pid}")
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+                    logging.warning(f"Failed to terminate process with PID: {pid}")
         QMessageBox.information(self, "Info", "Selected processes have been terminated.")
 
     def manage_startup_apps(self):
@@ -332,52 +331,97 @@ class SystemDiagnosticApp(QMainWindow):
         label = QLabel("Installed Software")
         layout.addWidget(label)
 
+        # Create a table for installed software
         self.software_table = QTableWidget()
         self.software_table.setColumnCount(3)
-        self.software_table.setHorizontalHeaderLabels(["Name", "Version", "Install Date"])
-        self.software_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.software_table.setHorizontalHeaderLabels(["Select", "Name", "Update Available"])
+        self.software_table = QTableWidget()
+        self.software_table.setColumnCount(3)
+        self.software_table.setHorizontalHeaderLabels(["Select", "Name", "Update Available"])
+
+        # Adjust column widths
+        self.software_table.setColumnWidth(0, 70)  # Width for the "Select" column
+        self.software_table.setColumnWidth(1, 450)  # Width for the "Name" column
+        self.software_table.setColumnWidth(2, 100)  # Width for the "Update Available" column
+
+        # Stretch the remaining columns (optional, for better UI)
+        self.software_table.horizontalHeader().setStretchLastSection(True)
+
         layout.addWidget(self.software_table)
 
+        # Add "Uninstall Selected" button
         uninstall_button = self.create_styled_button("Uninstall Selected")
         uninstall_button.clicked.connect(self.uninstall_selected_software)
         layout.addWidget(uninstall_button)
+
+        # Add "Update Selected" button
+        update_button = self.create_styled_button("Update Selected")
+        update_button.clicked.connect(self.update_selected_software)
+        layout.addWidget(update_button)
 
         self.software_window.setLayout(layout)
         self.software_window.resize(800, 600)
         self.software_window.show()
 
-        # Fetch installed software in a separate thread
-        self.software_fetch_thread = SoftwareFetchThread()
+        # Fetch installed software using winget in a separate thread
+        self.software_fetch_thread = WingetSoftwareFetchThread()
         self.software_fetch_thread.software_fetched.connect(self.populate_software_table)
         self.software_fetch_thread.start()
 
     def populate_software_table(self, software):
         """Populate the software table with fetched data."""
         self.software_table.setRowCount(len(software))
-        for row, (name, version, install_date) in enumerate(software):
-            self.software_table.setItem(row, 0, QTableWidgetItem(name))
-            self.software_table.setItem(row, 1, QTableWidgetItem(version))
-            self.software_table.setItem(row, 2, QTableWidgetItem(install_date))
+        for row, (name, update_available) in enumerate(software):
+            # Add a checkbox in the first column
+            checkbox = QTableWidgetItem()
+            checkbox.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            checkbox.setCheckState(Qt.Unchecked)
+            self.software_table.setItem(row, 0, checkbox)
+
+            # Add the name and update availability
+            self.software_table.setItem(row, 1, QTableWidgetItem(name))
+            self.software_table.setItem(row, 2, QTableWidgetItem(update_available))
 
     def uninstall_selected_software(self):
         """Uninstall selected software."""
-        selected_rows = self.software_table.selectionModel().selectedRows()
+        selected_rows = [
+            row for row in range(self.software_table.rowCount())
+            if self.software_table.item(row, 0).checkState() == Qt.Checked
+        ]
         if not selected_rows:
             QMessageBox.information(self, "Info", "No software selected for uninstallation.")
             return
 
         for row in selected_rows:
-            name = self.software_table.item(row.row(), 0).text()
+            name = self.software_table.item(row, 1).text()
             try:
-                subprocess.run(
-                    ["powershell", "-Command", f"(Get-WmiObject -Class Win32_Product -Filter \"Name='{name}'\").Uninstall()"],
-                    check=True
-                )
+                subprocess.run(["winget", "uninstall", "--name", name], check=True)
                 logging.info(f"Successfully uninstalled {name}.")
             except subprocess.CalledProcessError as e:
                 logging.error(f"Failed to uninstall {name}: {e}")
 
         QMessageBox.information(self, "Success", "Selected software uninstalled successfully.")
+        self.manage_software()  # Refresh the list
+
+    def update_selected_software(self):
+        """Update selected software."""
+        selected_rows = [
+            row for row in range(self.software_table.rowCount())
+            if self.software_table.item(row, 0).checkState() == Qt.Checked
+        ]
+        if not selected_rows:
+            QMessageBox.information(self, "Info", "No software selected for update.")
+            return
+
+        for row in selected_rows:
+            name = self.software_table.item(row, 1).text()
+            try:
+                subprocess.run(["winget", "upgrade", "--name", name], check=True)
+                logging.info(f"Successfully updated {name}.")
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to update {name}: {e}")
+
+        QMessageBox.information(self, "Success", "Selected software updated successfully.")
         self.manage_software()  # Refresh the list
 
     def network_diagnostics(self):
