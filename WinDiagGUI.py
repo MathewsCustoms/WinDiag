@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout, QWidget, QLabel, QListWidget, QListWidgetItem, QMessageBox,
     QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 import logging
 
 # Configure logging
@@ -45,6 +45,8 @@ class SystemDiagnosticApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("System Diagnostic Tool")
         self.setGeometry(100, 100, 800, 600)
+        self.center_window()  # Center the main window on the screen
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
@@ -56,60 +58,44 @@ class SystemDiagnosticApp(QMainWindow):
         self.title_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.title_label)
 
-        # Create two columns of buttons
-        self.button_layout = QHBoxLayout()
-        self.left_column = QVBoxLayout()
-        self.right_column = QVBoxLayout()
-
-        # Buttons for actions
-        self.cpu_button = self.create_styled_button("Check CPU Usage")
-        self.memory_button = self.create_styled_button("Check Memory Usage")
-        self.disk_button = self.create_styled_button("Check Disk Space")
-        self.temp_button = self.create_styled_button("Find Temporary Files")
-        self.clear_temp_button = self.create_styled_button("Clean Temporary Files")
-        self.startup_button = self.create_styled_button("Manage Startup Applications")
-        self.process_button = self.create_styled_button("Manage Processes")
-        self.software_button = self.create_styled_button("Manage Software")  # Software Inventory Button
-        self.network_button = self.create_styled_button("Network Diagnostics")  # Network Diagnostics Button
-
-        # Add buttons to respective columns
-        self.left_column.addWidget(self.cpu_button)
-        self.left_column.addWidget(self.memory_button)
-        self.left_column.addWidget(self.disk_button)
-        self.left_column.addWidget(self.process_button)
-
-        self.right_column.addWidget(self.temp_button)
-        self.right_column.addWidget(self.startup_button)
-        self.right_column.addWidget(self.clear_temp_button)
-        self.right_column.addWidget(self.software_button)
-        self.right_column.addWidget(self.network_button)
-
-        # Add columns to the layout
-        self.button_layout.addLayout(self.left_column)
-        self.button_layout.addLayout(self.right_column)
-        self.layout.addLayout(self.button_layout)
-
-        # Text area to display results
+        # Create a text area for live stats
         self.result_area = QTextEdit()
         self.result_area.setReadOnly(True)
         self.result_area.setStyleSheet("font-size: 14px;")
         self.layout.addWidget(self.result_area)
 
+        # Add buttons for actions
+        self.button_layout = QHBoxLayout()
+        self.temp_button = self.create_styled_button("Clean Temporary Files")
+        self.process_button = self.create_styled_button("Manage Processes")
+        self.startup_button = self.create_styled_button("Manage Startup Applications")
+        self.software_button = self.create_styled_button("Manage Software")
+        self.network_button = self.create_styled_button("Network Diagnostics")
+
+        # Add buttons to layout
+        self.button_layout.addWidget(self.temp_button)
+        self.button_layout.addWidget(self.process_button)
+        self.button_layout.addWidget(self.startup_button)
+        self.button_layout.addWidget(self.software_button)
+        self.button_layout.addWidget(self.network_button)
+        self.layout.addLayout(self.button_layout)
+
         self.central_widget.setLayout(self.layout)
 
         # Connect buttons to functions
-        self.cpu_button.clicked.connect(self.check_cpu_usage)
-        self.memory_button.clicked.connect(self.check_memory_usage)
-        self.disk_button.clicked.connect(self.check_disk_space)
-        self.temp_button.clicked.connect(self.find_temp_files)
-        self.clear_temp_button.clicked.connect(self.clean_temp_files)
-        self.startup_button.clicked.connect(self.manage_startup_apps)
+        self.temp_button.clicked.connect(self.clean_temp_files)
         self.process_button.clicked.connect(self.manage_processes)
+        self.startup_button.clicked.connect(self.manage_startup_apps)
         self.software_button.clicked.connect(self.manage_software)
         self.network_button.clicked.connect(self.network_diagnostics)
 
         # Temporary file list
         self.temp_files = []
+
+        # Set up a timer to update live stats
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_live_stats)
+        self.timer.start(2000)  # Update every 2 seconds
 
     def create_styled_button(self, text):
         """Create a styled button with rounded edges and blue color."""
@@ -132,34 +118,56 @@ class SystemDiagnosticApp(QMainWindow):
         """)
         return button
 
-    # System diagnostic functions
-    def check_cpu_usage(self):
-        usage = psutil.cpu_percent(interval=1)
-        self.result_area.append(f"CPU Usage: {usage}%")
-        logging.info(f"CPU Usage: {usage}%")
+    def center_window(self):
+        """Center the main window on the screen."""
+        screen = QApplication.primaryScreen().geometry()
+        window = self.frameGeometry()
+        window.moveCenter(screen.center())
+        self.move(window.topLeft())
 
-    def check_memory_usage(self):
+    def update_live_stats(self):
+        """Update live system stats in the result area."""
+        # CPU usage
+        cpu_usage = psutil.cpu_percent(interval=None)
+        
+        # Memory usage
         memory = psutil.virtual_memory()
-        result = f"Memory Usage: {memory.percent}% of {round(memory.total / (1024**3), 2)} GB"
-        self.result_area.append(result)
-        logging.info(result)
-
-    def check_disk_space(self):
+        
+        # Disk usage (all drives)
+        disk_stats = ""
         partitions = psutil.disk_partitions()
         for partition in partitions:
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
-                result = (
-                    f"Drive {partition.device}: "
-                    f"{usage.free // (1024**3)} GB free out of {usage.total // (1024**3)} GB "
-                    f"({usage.percent}% used)"
+                disk_stats += (
+                    f"{partition.device}: {usage.percent}% used of {round(usage.total / (1024**3), 2)} GB\n"
                 )
-                self.result_area.append(result)
-                logging.info(result)
-            except PermissionError as e:
-                logging.warning(f"Permission denied for partition: {partition.device}")
+            except PermissionError:
+                continue
+        
+        # Temporary files count
+        temp_dirs = [
+            os.environ.get('TEMP', ''),
+            os.path.expanduser('~\\AppData\\Local\\Temp'),
+            "C:\\Windows\\Temp"
+        ]
+        temp_files_count = 0
+        for temp_dir in temp_dirs:
+            if not os.path.exists(temp_dir):
+                continue
+            for root, dirs, files in os.walk(temp_dir):
+                temp_files_count += len(files)
 
-    def find_temp_files(self):
+        # Update text area
+        self.result_area.setPlainText(
+            f"CPU Usage: {cpu_usage}%\n"
+            f"Memory Usage: {memory.percent}% of {round(memory.total / (1024**3), 2)} GB\n"
+            f"Disk Usage:\n{disk_stats}"
+            f"Temporary Files Count: {temp_files_count}\n"
+        )
+
+    def clean_temp_files(self):
+        """Clean temporary files."""
         temp_dirs = [
             os.environ.get('TEMP', ''),
             os.path.expanduser('~\\AppData\\Local\\Temp'),
@@ -172,10 +180,7 @@ class SystemDiagnosticApp(QMainWindow):
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     self.temp_files.append(os.path.join(root, file))
-        self.result_area.append(f"Found {len(self.temp_files)} temporary files.")
-        logging.info(f"Found {len(self.temp_files)} temporary files.")
 
-    def clean_temp_files(self):
         if not self.temp_files:
             QMessageBox.information(self, "Info", "No temporary files found to clean.")
             return
@@ -196,13 +201,56 @@ class SystemDiagnosticApp(QMainWindow):
         logging.info(f"Successfully deleted {success_count} files. Failed: {len(failed_files)}")
         self.temp_files = []
 
-    # Startup Management
+    def manage_processes(self):
+        """Display and manage running processes."""
+        self.process_window = QWidget()
+        self.process_window.setWindowTitle("Running Processes")
+        self.center_child_window(self.process_window)  # Center the process window
+        layout = QVBoxLayout()
+
+        label = QLabel("Running Processes")
+        layout.addWidget(label)
+
+        self.process_list = QListWidget()
+        processes = psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent'])
+        for proc in processes:
+            try:
+                text = f"PID: {proc.info['pid']}, Name: {proc.info['name']}, CPU: {proc.info['cpu_percent']}%, Memory: {proc.info['memory_percent']}%"
+                item = QListWidgetItem(text)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self.process_list.addItem(item)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        layout.addWidget(self.process_list)
+
+        kill_button = self.create_styled_button("Kill Selected")
+        kill_button.clicked.connect(self.kill_selected_processes)
+        layout.addWidget(kill_button)
+
+        self.process_window.setLayout(layout)
+        self.process_window.resize(800, 600)
+        self.process_window.show()
+
+    def kill_selected_processes(self):
+        """Kill selected processes."""
+        for i in range(self.process_list.count()):
+            item = self.process_list.item(i)
+            if item.checkState() == Qt.Checked:
+                pid = int(item.text().split(",")[0].split(":")[1].strip())
+                try:
+                    psutil.Process(pid).terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        QMessageBox.information(self, "Info", "Selected processes have been terminated.")
+
     def manage_startup_apps(self):
         """Display and manage startup applications."""
         startup_apps = self.get_startup_apps()
 
         self.startup_window = QWidget()
         self.startup_window.setWindowTitle("Startup Applications")
+        self.center_child_window(self.startup_window)  # Center the startup window
         layout = QVBoxLayout()
 
         label = QLabel("Startup Applications")
@@ -274,105 +322,37 @@ class SystemDiagnosticApp(QMainWindow):
             except PermissionError as e:
                 logging.error(f"Failed to delete {app_name}: {e}")
 
-    # Process Management
-    def manage_processes(self):
-        """Display and manage running processes."""
-        self.process_window = QWidget()
-        self.process_window.setWindowTitle("Running Processes")
-        layout = QVBoxLayout()
-
-        label = QLabel("Running Processes")
-        layout.addWidget(label)
-
-        self.process_list = QListWidget()
-        processes = psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent'])
-        for proc in processes:
-            try:
-                text = f"PID: {proc.info['pid']}, Name: {proc.info['name']}, CPU: {proc.info['cpu_percent']}%, Memory: {proc.info['memory_percent']}%"
-                item = QListWidgetItem(text)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(Qt.Unchecked)
-                self.process_list.addItem(item)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-        layout.addWidget(self.process_list)
-
-        kill_button = self.create_styled_button("Kill Selected")
-        kill_button.clicked.connect(self.kill_selected_processes)
-        layout.addWidget(kill_button)
-
-        self.process_window.setLayout(layout)
-        self.process_window.resize(800, 600)
-        self.process_window.show()
-
-    def kill_selected_processes(self):
-        """Kill selected processes."""
-        for i in range(self.process_list.count()):
-            item = self.process_list.item(i)
-            if item.checkState() == Qt.Checked:
-                pid = int(item.text().split(",")[0].split(":")[1].strip())
-                try:
-                    psutil.Process(pid).terminate()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-        QMessageBox.information(self, "Info", "Selected processes have been terminated.")
-
-    # Software Inventory Functions
     def manage_software(self):
         """Display a window to manage installed software."""
         self.software_window = QWidget()
         self.software_window.setWindowTitle("Installed Software")
+        self.center_child_window(self.software_window)  # Center the software window
         layout = QVBoxLayout()
 
-        # Add label
-        self.loading_label = QLabel("Loading installed software... Please wait.")
-        self.loading_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #007BFF;")
-        layout.addWidget(self.loading_label)
+        label = QLabel("Installed Software")
+        layout.addWidget(label)
 
-        # Create a table for software inventory
         self.software_table = QTableWidget()
         self.software_table.setColumnCount(3)
         self.software_table.setHorizontalHeaderLabels(["Name", "Version", "Install Date"])
         self.software_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.software_table.setVisible(False)  # Hide table until data is loaded
         layout.addWidget(self.software_table)
 
-        # Add "Uninstall Selected" button
-        self.uninstall_button = self.create_styled_button("Uninstall Selected")
-        self.uninstall_button.setEnabled(False)  # Disable until data is loaded
-        self.uninstall_button.setStyleSheet("""
-            QPushButton {
-                background-color: #FF4500;
-                color: white;
-                font-weight: bold;
-                border-radius: 10px;
-                padding: 10px;
-            }
-            QPushButton:hover {
-                background-color: #CC3700;
-            }
-            QPushButton:pressed {
-                background-color: #992900;
-            }
-        """)
-        self.uninstall_button.clicked.connect(self.uninstall_selected_software)
-        layout.addWidget(self.uninstall_button)
+        uninstall_button = self.create_styled_button("Uninstall Selected")
+        uninstall_button.clicked.connect(self.uninstall_selected_software)
+        layout.addWidget(uninstall_button)
 
         self.software_window.setLayout(layout)
         self.software_window.resize(800, 600)
         self.software_window.show()
 
-        # Start the software fetch thread
+        # Fetch installed software in a separate thread
         self.software_fetch_thread = SoftwareFetchThread()
         self.software_fetch_thread.software_fetched.connect(self.populate_software_table)
         self.software_fetch_thread.start()
 
     def populate_software_table(self, software):
         """Populate the software table with fetched data."""
-        self.loading_label.setVisible(False)  # Hide loading label
-        self.software_table.setVisible(True)  # Show table
-        self.uninstall_button.setEnabled(True)  # Enable uninstall button
-
         self.software_table.setRowCount(len(software))
         for row, (name, version, install_date) in enumerate(software):
             self.software_table.setItem(row, 0, QTableWidgetItem(name))
@@ -380,13 +360,12 @@ class SystemDiagnosticApp(QMainWindow):
             self.software_table.setItem(row, 2, QTableWidgetItem(install_date))
 
     def uninstall_selected_software(self):
-        """Uninstall selected software using PowerShell."""
+        """Uninstall selected software."""
         selected_rows = self.software_table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.information(self, "Info", "No software selected for uninstallation.")
             return
 
-        failed_uninstalls = []
         for row in selected_rows:
             name = self.software_table.item(row.row(), 0).text()
             try:
@@ -397,52 +376,50 @@ class SystemDiagnosticApp(QMainWindow):
                 logging.info(f"Successfully uninstalled {name}.")
             except subprocess.CalledProcessError as e:
                 logging.error(f"Failed to uninstall {name}: {e}")
-                failed_uninstalls.append(name)
 
-        if failed_uninstalls:
-            QMessageBox.warning(self, "Warning", f"Failed to uninstall {len(failed_uninstalls)} program(s).")
-        else:
-            QMessageBox.information(self, "Success", "Selected software uninstalled successfully.")
-
+        QMessageBox.information(self, "Success", "Selected software uninstalled successfully.")
         self.manage_software()  # Refresh the list
 
-    # Network Diagnostics
     def network_diagnostics(self):
         """Display active network connections."""
         self.network_window = QWidget()
         self.network_window.setWindowTitle("Network Diagnostics")
+        self.center_child_window(self.network_window)  # Center the network window
         layout = QVBoxLayout()
 
         label = QLabel("Active Network Connections")
         layout.addWidget(label)
 
-        # Create a table for network connections
         self.network_table = QTableWidget()
         self.network_table.setColumnCount(4)
         self.network_table.setHorizontalHeaderLabels(["Local Address", "Remote Address", "Status", "PID"])
         self.network_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.network_table)
 
-        # Fetch and display network connections
         connections = psutil.net_connections()
         self.network_table.setRowCount(len(connections))
 
         for row, conn in enumerate(connections):
-            # Format local and remote addresses
             local_address = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "N/A"
             remote_address = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A"
             status = conn.status
             pid = str(conn.pid) if conn.pid else "N/A"
 
-            # Populate the table
             self.network_table.setItem(row, 0, QTableWidgetItem(local_address))
             self.network_table.setItem(row, 1, QTableWidgetItem(remote_address))
             self.network_table.setItem(row, 2, QTableWidgetItem(status))
             self.network_table.setItem(row, 3, QTableWidgetItem(pid))
 
-        layout.addWidget(self.network_table)
         self.network_window.setLayout(layout)
         self.network_window.resize(800, 600)
         self.network_window.show()
+
+    def center_child_window(self, window):
+        """Center a child window on the screen."""
+        screen = QApplication.primaryScreen().geometry()
+        window_rect = window.frameGeometry()
+        window_rect.moveCenter(screen.center())
+        window.move(window_rect.topLeft())
 
 
 # Run the application
